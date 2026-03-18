@@ -1,5 +1,11 @@
 # 📚 学习追踪器
 
+<div align="center">
+
+**[🌐 在线体验](https://xuzhangheng917.github.io/study-tracker/)** | **[📦 下载 APK](https://github.com/xuzhangheng917/study-tracker/releases)**
+
+</div>
+
 一个简洁优雅的学习时间追踪应用，帮助你记录和统计学习时间。
 
 ## ✨ 功能特性
