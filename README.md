@@ -50,7 +50,11 @@ cd android && ./gradlew assembleDebug
 
 ## 📸 截图
 
-> 截图待添加
+<div align="center">
+  <img src="public/screenshots/timer.png" width="200" alt="计时器">
+  <img src="public/screenshots/stats.png" width="200" alt="统计">
+  <img src="public/screenshots/records.png" width="200" alt="记录">
+</div>
 
 ## 📝 更新日志
 
