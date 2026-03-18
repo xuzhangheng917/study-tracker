@@ -19,7 +19,7 @@
 
 ### 网页版
 
-访问在线版本：[Study Tracker](https://study-tracker.vercel.app)（待部署）
+访问在线版本：**https://xuzhangheng917.github.io/study-tracker/**
 
 ## 🛠️ 技术栈
 
