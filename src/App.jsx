@@ -43,7 +43,7 @@ const getLocalDateString = (date = new Date()) => {
 }
 
 // 当前版本 - 与 GitHub Release 保持同步
-const APP_VERSION = '1.7.45'
+const APP_VERSION = '1.7.46'
 const GITHUB_REPO = 'xuzhangheng917/study-tracker'
 const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
 const RELEASE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`
@@ -632,18 +632,46 @@ function TimerPage({ records, setRecords }) {
 
   // 番茄钟：跳过当前阶段
   const handlePomodoroSkip = () => {
+    // 如果是专注阶段，记录已专注的时间
+    if (pomodoroPhase === 'focus') {
+      const elapsed = focusDuration - pomodoroSeconds
+      if (elapsed > 0) {
+        const newCount = pomodoroCount + 1
+        setPomodoroCount(newCount)
+        const record = {
+          id: Date.now(),
+          subject: showCustom ? customSubject : subject,
+          duration: elapsed,
+          date: getLocalDateString(),
+          timestamp: Date.now()
+        }
+        setRecords([record, ...records])
+        Toast.show({ icon: 'success', content: `🍅 已记录 ${formatDuration(elapsed, 'compact')}`, duration: 1500 })
+      }
+    }
+
     const nextPhase = getNextPhase()
     setPomodoroPhase(nextPhase)
     setPomodoroSeconds(nextPhase === 'focus' ? focusDuration : (nextPhase === 'longBreak' ? longBreak : shortBreak))
     setIsRunning(false)
-    
-    if (pomodoroPhase === 'focus') {
-      setPomodoroCount(prev => prev + 1)
-    }
   }
 
   // 番茄钟：重置
   const handlePomodoroReset = () => {
+    // 如果正在专注，记录已专注的时间
+    if (pomodoroPhase === 'focus' && pomodoroSeconds < focusDuration) {
+      const elapsed = focusDuration - pomodoroSeconds
+      if (elapsed > 0) {
+        const record = {
+          id: Date.now(),
+          subject: showCustom ? customSubject : subject,
+          duration: elapsed,
+          date: getLocalDateString(),
+          timestamp: Date.now()
+        }
+        setRecords([record, ...records])
+      }
+    }
     setIsRunning(false)
     setPomodoroPhase('focus')
     setPomodoroCount(0)
