@@ -1,7 +1,38 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Cell, LabelList } from 'recharts'
-import { Popup, Form, Input, Button, Selector, DatePicker, Space, Stepper, Dialog } from 'antd-mobile'
+import { Popup, Form, Input, Button, Selector, DatePicker, Space, Stepper, Dialog, Toast } from 'antd-mobile'
 import './index.css'
+
+// 动态导入 Capacitor（仅在原生平台使用）
+let Capacitor = null
+let Browser = null
+let Filesystem = null
+let Directory = null
+let AppLauncher = null
+
+const loadCapacitor = async () => {
+  try {
+    const capacitorCore = await import('@capacitor/core')
+    const capacitorBrowser = await import('@capacitor/browser')
+    const capacitorFilesystem = await import('@capacitor/filesystem')
+    const capacitorAppLauncher = await import('@capacitor/app-launcher')
+    
+    Capacitor = capacitorCore.Capacitor
+    Browser = capacitorBrowser.Browser
+    Filesystem = capacitorFilesystem.Filesystem
+    Directory = capacitorFilesystem.Directory
+    AppLauncher = capacitorAppLauncher.AppLauncher
+    
+    return true
+  } catch (e) {
+    console.log('Capacitor not available:', e)
+    return false
+  }
+}
+
+// 是否在原生平台
+const isNativePlatform = () => Capacitor?.isNativePlatform?.() || false
+const getPlatform = () => Capacitor?.getPlatform?.() || 'web'
 
 // 获取本地日期字符串 (避免时区问题)
 const getLocalDateString = (date = new Date()) => {
@@ -11,10 +42,11 @@ const getLocalDateString = (date = new Date()) => {
   return `${year}-${month}-${day}`
 }
 
-// 当前版本
-const APP_VERSION = '1.0.5'
-const VERSION_URL = 'https://raw.githubusercontent.com/openclaw/study-tracker/main/version.json'
-const APK_URL = 'https://raw.githubusercontent.com/openclaw/study-tracker/main/study-tracker.apk'
+// 当前版本 - 与 GitHub Release 保持同步
+const APP_VERSION = '1.7.45'
+const GITHUB_REPO = 'xuzhangheng917/study-tracker'
+const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
+const RELEASE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`
 
 // 从 localStorage 加载数据
 const loadData = () => {
@@ -63,18 +95,29 @@ const formatDurationForFlip = (seconds) => {
   }
 }
 
-// 格式化时长
-const formatDuration = (seconds) => {
+// 格式化时长（统一函数，style 控制格式）
+const formatDuration = (seconds, style = 'full') => {
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
   const s = seconds % 60
-  if (h > 0) {
-    return `${h}小时${m}分${s}秒`
+  switch (style) {
+    case 'compact': // 2时30分15秒
+      if (h > 0) return `${h}时${m}分${s}秒`
+      if (m > 0) return `${m}分${s}秒`
+      return `${s}秒`
+    case 'short': // 1h 30m
+      if (h > 0) return `${h}h ${m}m`
+      return `${m}m`
+    case 'short2': // 1小时 / 30分钟
+      if (h > 0 && m === 0) return `${h}小时`
+      if (h > 0) return `${h}时${m}分`
+      if (m > 0) return `${m}分钟`
+      return `${seconds}秒`
+    default: // full: 1小时30分15秒
+      if (h > 0) return `${h}小时${m}分${s}秒`
+      if (m > 0) return `${m}分${s}秒`
+      return `${s}秒`
   }
-  if (m > 0) {
-    return `${m}分${s}秒`
-  }
-  return `${s}秒`
 }
 
 // 翻页数字组件
@@ -191,45 +234,6 @@ function useScrollToToday(displayChartDays) {
   return chartRef
 }
 
-// 格式化时长（短格式，用于概览卡片）
-const formatDurationCompact = (seconds) => {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  if (h > 0) {
-    return `${h}时${m}分${s}秒`
-  }
-  if (m > 0) {
-    return `${m}分${s}秒`
-  }
-  return `${s}秒`
-}
-
-// 格式化时长（短格式，用于饼图中心）
-const formatDurationShort2 = (seconds) => {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (h > 0 && m === 0) {
-    return `${h}小时`
-  }
-  if (h > 0) {
-    return `${h}时${m}分`
-  }
-  if (m > 0) {
-    return `${m}分钟`
-  }
-  return `${seconds}秒`
-}
-
-// 格式化时长（短格式）
-const formatDurationShort = (seconds) => {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (h > 0) {
-    return `${h}h ${m}m`
-  }
-  return `${m}m`
-}
 
 // 格式化日期
 const formatDate = (dateStr) => {
@@ -285,6 +289,29 @@ const getSubjectColor = (subject) => {
   return colors[Math.abs(hash) % colors.length]
 }
 
+// 番茄钟默认设置
+const POMODORO_DEFAULTS = {
+  focusDuration: 25 * 60,      // 25分钟
+  shortBreak: 5 * 60,          // 5分钟短休息
+  longBreak: 15 * 60,          // 15分钟长休息
+  longBreakInterval: 4         // 每4个番茄后长休息
+}
+
+// 保存番茄钟状态
+const savePomodoroState = (state) => {
+  localStorage.setItem('pomodoroState', JSON.stringify(state))
+}
+
+// 加载番茄钟状态
+const loadPomodoroState = () => {
+  try {
+    const data = localStorage.getItem('pomodoroState')
+    return data ? JSON.parse(data) : null
+  } catch {
+    return null
+  }
+}
+
 // 生成饼图渐变
 const generatePieChartGradient = (stats, total) => {
   const entries = Object.entries(stats).sort((a, b) => b[1] - a[1])
@@ -307,45 +334,39 @@ const generatePieChartGradient = (stats, total) => {
 // 计时器页面
 // ============================================
 function TimerPage({ records, setRecords }) {
-  // 从 localStorage 恢复计时器状态
-  const getInitialState = () => {
-    const saved = loadTimerState()
-    if (saved) {
-      // 如果之前正在运行，根据开始时间重新计算秒数
-      let calculatedSeconds = saved.seconds || 0
-      if (saved.isRunning && saved.startTime) {
-        calculatedSeconds = Math.floor((Date.now() - saved.startTime) / 1000)
-      }
-      return {
-        seconds: calculatedSeconds,
-        subject: saved.subject || '编程',
-        customSubject: saved.customSubject || '',
-        showCustom: saved.showCustom || false,
-        isRunning: saved.isRunning || false,
-        startTime: saved.startTime || null
-      }
-    }
-    return {
-      seconds: 0,
-      subject: '编程',
-      customSubject: '',
-      showCustom: false,
-      isRunning: false,
-      startTime: null
-    }
-  }
-
-  const initialState = getInitialState()
+  // 计时模式：normal 普通计时 | pomodoro 番茄钟
+  const [timerMode, setTimerMode] = useState('normal')
   
-  const [isRunning, setIsRunning] = useState(initialState.isRunning)
-  const [seconds, setSeconds] = useState(initialState.seconds)
-  const [subject, setSubject] = useState(initialState.subject)
-  const [customSubject, setCustomSubject] = useState(initialState.customSubject)
-  const [showCustom, setShowCustom] = useState(initialState.showCustom)
+  // 普通计时模式的秒数（正计时）
+  const [normalSeconds, setNormalSeconds] = useState(0)
+  
+  // 番茄钟说明弹窗
+  const [showPomodoroHelp, setShowPomodoroHelp] = useState(false)
+  
+  // 番茄钟状态
+  const [pomodoroPhase, setPomodoroPhase] = useState('focus')
+  const [pomodoroCount, setPomodoroCount] = useState(0)
+  const [pomodoroSeconds, setPomodoroSeconds] = useState(POMODORO_DEFAULTS.focusDuration)
+  
+  const focusDuration = POMODORO_DEFAULTS.focusDuration
+  const shortBreak = POMODORO_DEFAULTS.shortBreak
+  const longBreak = POMODORO_DEFAULTS.longBreak
+  
+  // 普通计时状态
+  
+  const [subject, setSubject] = useState('编程')
+  const [customSubject, setCustomSubject] = useState('')
+  const [showCustom, setShowCustom] = useState(false)
   const [subjects, setSubjects] = useState(loadSubjects)
   const intervalRef = useRef(null)
   const longPressRef = useRef(null)
-  const startTimeRef = useRef(initialState.startTime) // 记录开始时间
+  const startTimeRef = useRef(null)
+  const pomodoroStartTimeRef = useRef(null) // 番茄钟开始时间
+  const pomodoroCompleteRef = useRef(null) // 避免闭包问题
+  
+  // 当前模式的秒数（派生值）
+  const seconds = timerMode === 'pomodoro' ? pomodoroSeconds : normalSeconds
+  const [isRunning, setIsRunning] = useState(false)
 
   // 保存科目列表
   useEffect(() => {
@@ -354,15 +375,30 @@ function TimerPage({ records, setRecords }) {
 
   // 保存计时器状态
   useEffect(() => {
+    // 计算当前阶段时长
+    let phaseDuration = null
+    if (timerMode === 'pomodoro') {
+      phaseDuration = pomodoroPhase === 'focus' ? focusDuration : 
+                      pomodoroPhase === 'longBreak' ? longBreak : shortBreak
+    }
+    
     saveTimerState({
-      seconds,
+      seconds: timerMode === 'pomodoro' ? pomodoroSeconds : normalSeconds,
       subject,
       customSubject,
       showCustom,
       isRunning,
-      startTime: startTimeRef.current
+      startTime: startTimeRef.current,
+      isPomodoro: timerMode === 'pomodoro',
+      pomodoroPhase,
+      phaseDuration
     })
-  }, [seconds, subject, customSubject, showCustom, isRunning])
+  }, [normalSeconds, pomodoroSeconds, subject, customSubject, showCustom, isRunning, timerMode, pomodoroPhase])
+  
+  // 保存模式
+  useEffect(() => {
+    localStorage.setItem('timerMode', timerMode)
+  }, [timerMode])
   
   // 添加新科目
   const addSubject = (name) => {
@@ -402,67 +438,263 @@ function TimerPage({ records, setRecords }) {
     }
   }
 
+  // 单一计时器 interval
   useEffect(() => {
-    if (isRunning) {
-      intervalRef.current = setInterval(() => {
-        setSeconds(s => s + 1)
-      }, 1000)
-    }
-    return () => clearInterval(intervalRef.current)
-  }, [isRunning])
-
-  // 初始化时如果是运行状态，启动定时器
-  useEffect(() => {
-    if (initialState.isRunning && initialState.startTime) {
-      startTimeRef.current = initialState.startTime
-    }
-  }, [])
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && isRunning && startTimeRef.current) {
-        // 计算从开始到现在经过的秒数
-        const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
-        setSeconds(elapsed)
+    if (!isRunning) return
+    const id = setInterval(() => {
+      if (timerMode === 'pomodoro') {
+        setPomodoroSeconds(s => {
+          const newSeconds = s - 1
+          if (newSeconds <= 0) {
+            setTimeout(() => pomodoroCompleteRef.current?.(), 0)
+            return 0
+          }
+          return newSeconds
+        })
+      } else {
+        setNormalSeconds(s => s + 1)
       }
-    }
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [isRunning])
+    }, 1000)
+    return () => clearInterval(id)
+  }, [isRunning, timerMode])
 
-  const handleStart = () => {
+  // 普通计时控制
+  const handleNormalStart = () => {
     setIsRunning(true)
-    // 保存开始时间（当前时间 - 已计时的秒数）
-    startTimeRef.current = Date.now() - seconds * 1000
+    startTimeRef.current = Date.now() - normalSeconds * 1000
   }
   
-  const handlePause = () => {
+  const handleNormalPause = () => {
     setIsRunning(false)
-    // 暂停时清除开始时间
     startTimeRef.current = null
   }
 
-  const handleStop = () => {
-    if (seconds > 0) {
+  const handleNormalStop = () => {
+    if (normalSeconds > 0) {
       const record = {
         id: Date.now(),
         subject: showCustom ? customSubject : subject,
-        duration: seconds,
+        duration: normalSeconds,
         date: getLocalDateString(),
         timestamp: Date.now()
       }
       setRecords([record, ...records])
     }
     setIsRunning(false)
-    setSeconds(0)
+    setNormalSeconds(0)
     setCustomSubject('')
     setShowCustom(false)
     startTimeRef.current = null
-    clearTimerState()
+  }
+
+  // 当前模式的控制函数
+  const handleStart = () => {
+    setIsRunning(true)
+    if (timerMode === 'pomodoro') {
+      pomodoroStartTimeRef.current = Date.now()
+    } else {
+      startTimeRef.current = Date.now() - normalSeconds * 1000
+    }
+  }
+  
+  const handlePause = () => {
+    setIsRunning(false)
+    if (timerMode === 'pomodoro') {
+      pomodoroStartTimeRef.current = null
+    } else {
+      startTimeRef.current = null
+    }
+  }
+
+  // 页面恢复时补偿后台时间
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible' || !isRunning) return
+
+      if (timerMode === 'pomodoro') {
+        if (pomodoroStartTimeRef.current) {
+          const elapsed = Math.floor((Date.now() - pomodoroStartTimeRef.current) / 1000)
+          setPomodoroSeconds(prev => {
+            const remaining = getCurrentPhaseDuration() - elapsed
+            if (remaining <= 0) {
+              setTimeout(() => pomodoroCompleteRef.current?.(), 0)
+              return 0
+            }
+            return remaining
+          })
+        }
+      } else {
+        if (startTimeRef.current) {
+          const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
+          setNormalSeconds(elapsed)
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [isRunning, timerMode])
+
+  const handleStop = () => {
+    if (timerMode === 'pomodoro') {
+      handlePomodoroReset()
+    } else {
+      handleNormalStop()
+    }
+  }
+
+  // 番茄钟：获取当前阶段时长
+  const getCurrentPhaseDuration = () => {
+    switch (pomodoroPhase) {
+      case 'focus': return focusDuration
+      case 'shortBreak': return shortBreak
+      case 'longBreak': return longBreak
+      default: return focusDuration
+    }
+  }
+
+  // 番茄钟：获取当前阶段名称
+  const getPhaseName = () => {
+    switch (pomodoroPhase) {
+      case 'focus': return '专注'
+      case 'shortBreak': return '短休息'
+      case 'longBreak': return '长休息'
+      default: return '专注'
+    }
+  }
+
+  // 番茄钟：获取下一个阶段
+  const getNextPhase = () => {
+    if (pomodoroPhase === 'focus') {
+      // 完成一个番茄后
+      const newCount = pomodoroCount + 1
+      if (newCount % POMODORO_DEFAULTS.longBreakInterval === 0) {
+        return 'longBreak'
+      }
+      return 'shortBreak'
+    }
+    return 'focus'
+  }
+
+  // 番茄钟完成处理
+  const handlePomodoroComplete = () => {
+    setIsRunning(false)
+    
+    if (pomodoroPhase === 'focus') {
+      // 完成一个番茄
+      const newCount = pomodoroCount + 1
+      setPomodoroCount(newCount)
+      
+      // 保存学习记录
+      const record = {
+        id: Date.now(),
+        subject: showCustom ? customSubject : subject,
+        duration: focusDuration,
+        date: getLocalDateString(),
+        timestamp: Date.now()
+      }
+      setRecords([record, ...records])
+      
+      // 显示提示
+      Toast.show({
+        icon: 'success',
+        content: `🍅 第 ${newCount} 个番茄完成！`,
+        duration: 2000
+      })
+      
+      // 切换到休息
+      const nextPhase = getNextPhase()
+      setPomodoroPhase(nextPhase)
+      setPomodoroSeconds(nextPhase === 'longBreak' ? longBreak : shortBreak)
+    } else {
+      // 休息结束
+      Toast.show({
+        icon: 'success',
+        content: '休息结束，开始下一个番茄！',
+        duration: 2000
+      })
+      setPomodoroPhase('focus')
+      setPomodoroSeconds(focusDuration)
+    }
+  }
+  // 同步到 ref，避免 setInterval 中闭包过期
+  pomodoroCompleteRef.current = handlePomodoroComplete
+
+  // 番茄钟：开始
+  const handlePomodoroStart = () => {
+    if (pomodoroSeconds === 0) {
+      setPomodoroSeconds(getCurrentPhaseDuration())
+    }
+    
+    setIsRunning(true)
+    pomodoroStartTimeRef.current = Date.now()
+  }
+
+  // 番茄钟：跳过当前阶段
+  const handlePomodoroSkip = () => {
+    const nextPhase = getNextPhase()
+    setPomodoroPhase(nextPhase)
+    setPomodoroSeconds(nextPhase === 'focus' ? focusDuration : (nextPhase === 'longBreak' ? longBreak : shortBreak))
+    setIsRunning(false)
+    
+    if (pomodoroPhase === 'focus') {
+      setPomodoroCount(prev => prev + 1)
+    }
+  }
+
+  // 番茄钟：重置
+  const handlePomodoroReset = () => {
+    setIsRunning(false)
+    setPomodoroPhase('focus')
+    setPomodoroCount(0)
+    setPomodoroSeconds(focusDuration)
+  }
+
+  // 计算番茄钟进度
+  const getPomodoroProgress = () => {
+    const total = getCurrentPhaseDuration()
+    const elapsed = total - pomodoroSeconds
+    return Math.round((elapsed / total) * 100)
   }
 
   return (
     <div className="page timer-page">
+      {/* 模式切换 */}
+      <div className="mode-switch">
+        <button 
+          className={`mode-btn ${timerMode === 'normal' ? 'active' : ''} ${isRunning ? 'disabled' : ''}`}
+          disabled={isRunning}
+          onClick={() => setTimerMode('normal')}
+        >
+          ⏱️ 计时
+        </button>
+        <button 
+          className={`mode-btn ${timerMode === 'pomodoro' ? 'active' : ''} ${isRunning ? 'disabled' : ''}`}
+          disabled={isRunning}
+          onClick={() => setTimerMode('pomodoro')}
+        >
+          🍅 番茄钟
+        </button>
+      </div>
+
       <div className="timer-card">
+        {/* 番茄钟额外信息 */}
+        {timerMode === 'pomodoro' && (
+          <div className="pomodoro-info">
+            <span className="pomodoro-phase">{getPhaseName()}</span>
+            <div className="pomodoro-progress">
+              <div className="progress-bar" style={{ width: `${getPomodoroProgress()}%` }} />
+            </div>
+            <div className="pomodoro-count">
+              {Array.from({ length: Math.min(pomodoroCount, 8) }).map((_, i) => (
+                <span key={i} className="tomato">🍅</span>
+              ))}
+              {pomodoroCount > 8 && <span className="more">+{pomodoroCount - 8}</span>}
+              <button className="pomodoro-help-btn" onClick={() => setShowPomodoroHelp(true)}>❓</button>
+            </div>
+          </div>
+        )}
+
         <div className="timer-display">
           <FlipClock seconds={seconds} />
           {isRunning && <div className="timer-pulse" />}
@@ -520,33 +752,138 @@ function TimerPage({ records, setRecords }) {
 
         <div className="timer-controls">
           {!isRunning ? (
-            <button className="control-btn start" onClick={handleStart}>
-              <span className="icon">▶</span>
-              {seconds > 0 ? '继续' : '开始'}
-            </button>
+            <>
+              <button className="control-btn start" onClick={handleStart}>
+                <span className="icon">▶</span>
+                {timerMode === 'pomodoro' 
+                  ? (pomodoroSeconds === focusDuration || pomodoroSeconds === shortBreak || pomodoroSeconds === longBreak ? '开始' : '继续')
+                  : (normalSeconds > 0 ? '继续' : '开始')}
+              </button>
+              {timerMode === 'pomodoro' && (
+                <button className="control-btn skip" onClick={handlePomodoroSkip}>
+                  <span className="icon">⏭</span>
+                  跳过
+                </button>
+              )}
+            </>
           ) : (
-            <button className="control-btn pause" onClick={handlePause}>
-              <span className="icon">⏸</span>
-              暂停
-            </button>
+            <>
+              <button className="control-btn pause" onClick={handlePause}>
+                <span className="icon">⏸</span>
+                暂停
+              </button>
+              {timerMode === 'pomodoro' && (
+                <button className="control-btn skip" onClick={handlePomodoroSkip}>
+                  <span className="icon">⏭</span>
+                  跳过
+                </button>
+              )}
+            </>
           )}
-          {seconds > 0 && (
+          {timerMode === 'normal' && normalSeconds > 0 && (
             <button className="control-btn stop" onClick={handleStop}>
               <span className="icon">⏹</span>
               保存
+            </button>
+          )}
+          {timerMode === 'pomodoro' && (
+            <button className="control-btn reset" onClick={handlePomodoroReset}>
+              <span className="icon">🔄</span>
+              重置
             </button>
           )}
         </div>
       </div>
 
       {/* 今日统计摘要 */}
-      <TodaySummary records={records} />
+      <TodaySummary records={records} pomodoroCount={pomodoroCount} />
+
+      {/* 番茄钟说明弹窗 */}
+      <Popup
+        visible={showPomodoroHelp}
+        onMaskClick={() => setShowPomodoroHelp(false)}
+        position='bottom'
+        bodyStyle={{ borderRadius: '16px 16px 0 0', minHeight: '60vh', padding: '24px' }}
+      >
+        <div className="pomodoro-help">
+          <div className="pomodoro-help-header">
+            <h2>🍅 番茄钟使用说明</h2>
+            <button className="close-btn" onClick={() => setShowPomodoroHelp(false)}>✕</button>
+          </div>
+          
+          <div className="pomodoro-help-content">
+            <div className="help-section">
+              <h3>📌 什么是番茄钟？</h3>
+              <p>番茄钟是一种高效的时间管理方法，由弗朗西斯科·西里洛于1980年代发明。通过将工作时间分割成固定的时间段（番茄），每个番茄之间休息，帮助你保持专注力。</p>
+            </div>
+
+            <div className="help-section">
+              <h3>⏰ 时间设置</h3>
+              <div className="help-card">
+                <div className="help-card-item">
+                  <span className="help-icon">🎯</span>
+                  <div>
+                    <strong>专注时间</strong>
+                    <p>25 分钟</p>
+                  </div>
+                </div>
+                <div className="help-card-item">
+                  <span className="help-icon">☕</span>
+                  <div>
+                    <strong>短休息</strong>
+                    <p>5 分钟</p>
+                  </div>
+                </div>
+                <div className="help-card-item">
+                  <span className="help-icon">🌴</span>
+                  <div>
+                    <strong>长休息</strong>
+                    <p>每完成 4 个番茄后，休息 15 分钟</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="help-section">
+              <h3>📋 使用步骤</h3>
+              <ol className="help-steps">
+                <li>切换到 🍅 <strong>番茄钟</strong> 模式</li>
+                <li>选择你要学习的<strong>科目</strong></li>
+                <li>点击 <strong>▶ 开始</strong> 按钮，专注 25 分钟</li>
+                <li>专注结束后，自动进入 <strong>5 分钟休息</strong></li>
+                <li>休息结束后，自动开始下一个 <strong>25 分钟专注</strong></li>
+                <li>每完成 <strong>4 个番茄</strong>，享受一次 <strong>15 分钟长休息</strong></li>
+              </ol>
+            </div>
+
+            <div className="help-section">
+              <h3>💡 使用技巧</h3>
+              <ul className="help-tips">
+                <li>🎯 专注期间尽量<strong>不要被打断</strong>，如果被打断建议重新开始</li>
+                <li>📱 专注期间<strong>放下手机</strong>，专注于学习</li>
+                <li>☕ 休息时<strong>站起来活动</strong>，喝水或拉伸</li>
+                <li>📊 每个番茄钟结束后会<strong>自动记录</strong>学习时长到学习记录中</li>
+                <li>⏭ 如果需要提前结束，可以点击<strong>跳过</strong>按钮</li>
+              </ul>
+            </div>
+
+            <div className="help-section">
+              <h3>🔔 注意事项</h3>
+              <ul className="help-tips">
+                <li>计时器运行时<strong>不能切换</strong>到普通计时模式</li>
+                <li>切换模式前请先<strong>暂停或停止</strong>当前计时</li>
+                <li>番茄钟记录会显示在<strong>记录</strong>页面和<strong>统计</strong>页面中</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </Popup>
     </div>
   )
 }
 
 // 今日摘要
-function TodaySummary({ records }) {
+function TodaySummary({ records, pomodoroCount }) {
   const today = getLocalDateString()
   const todayRecords = records.filter(r => r.date === today)
   const todayTotal = todayRecords.reduce((sum, r) => sum + r.duration, 0)
@@ -562,6 +899,15 @@ function TodaySummary({ records }) {
         <span className="summary-label">今日次数</span>
         <span className="summary-value">{todayRecords.length} 次</span>
       </div>
+      {pomodoroCount > 0 && (
+        <>
+          <div className="summary-divider" />
+          <div className="summary-item">
+            <span className="summary-label">番茄</span>
+            <span className="summary-value">🍅 {pomodoroCount}</span>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -576,25 +922,25 @@ function StatsPage({ records }) {
   const [showDatePicker, setShowDatePicker] = useState(false)
 
   // 筛选日期范围内的记录
-  const filteredRecords = records.filter(r => r.date >= startDate && r.date <= endDate)
+  const filteredRecords = useMemo(() => records.filter(r => r.date >= startDate && r.date <= endDate), [records, startDate, endDate])
   
   // 按科目统计
-  const subjectStats = filteredRecords.reduce((acc, record) => {
+  const subjectStats = useMemo(() => filteredRecords.reduce((acc, record) => {
     acc[record.subject] = (acc[record.subject] || 0) + record.duration
     return acc
-  }, {})
+  }, {}), [filteredRecords])
 
   // 按日期统计（用于图表，使用所有记录）
-  const allDailyStats = records.reduce((acc, record) => {
+  const allDailyStats = useMemo(() => records.reduce((acc, record) => {
     acc[record.date] = (acc[record.date] || 0) + record.duration
     return acc
-  }, {})
+  }, {}), [records])
 
   // 按日期统计（用于筛选范围内的统计）
-  const dailyStats = filteredRecords.reduce((acc, record) => {
+  const dailyStats = useMemo(() => filteredRecords.reduce((acc, record) => {
     acc[record.date] = (acc[record.date] || 0) + record.duration
     return acc
-  }, {})
+  }, {}), [filteredRecords])
 
   // 计算日期范围内的天数
   const getDaysInRange = () => {
@@ -726,7 +1072,7 @@ function StatsPage({ records }) {
         <div className="overview-card">
           <div className="overview-icon">⏱️</div>
           <div className="overview-content">
-            <span className="overview-value">{formatDurationCompact(totalDuration)}</span>
+            <span className="overview-value">{formatDuration(totalDuration, "compact")}</span>
             <span className="overview-label">累计时长</span>
           </div>
         </div>
@@ -780,15 +1126,11 @@ function StatsPage({ records }) {
                   style={{ fill: '#6366f1', fontSize: 11, fontWeight: 600 }}
                 />
                 {displayChartDays.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={`url(#gradient-${index % 2})`} />
+                  <Cell key={`cell-${index}`} fill="url(#barGradient)" />
                 ))}
               </Bar>
               <defs>
-                <linearGradient id="gradient-0" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#818cf8" />
-                  <stop offset="100%" stopColor="#6366f1" />
-                </linearGradient>
-                <linearGradient id="gradient-1" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#818cf8" />
                   <stop offset="100%" stopColor="#6366f1" />
                 </linearGradient>
@@ -812,7 +1154,7 @@ function StatsPage({ records }) {
                 }}
               >
                 <div className="pie-chart-center">
-                  <span className="pie-chart-total">{formatDurationShort2(totalDuration)}</span>
+                  <span className="pie-chart-total">{formatDuration(totalDuration, "short2")}</span>
                   <span className="pie-chart-label">总时长</span>
                 </div>
               </div>
@@ -1015,14 +1357,14 @@ function RecordsPage({ records, setRecords }) {
   const [showAddForm, setShowAddForm] = useState(false)
 
   // 获取所有科目
-  const allSubjects = [...new Set(records.map(r => r.subject))]
+  const allSubjects = useMemo(() => [...new Set(records.map(r => r.subject))], [records])
 
   // 筛选记录
-  const filteredRecords = records.filter(r => {
+  const filteredRecords = useMemo(() => records.filter(r => {
     if (filterDate && r.date !== filterDate) return false
     if (filterSubject && r.subject !== filterSubject) return false
     return true
-  })
+  }), [records, filterDate, filterSubject])
 
   // 按日期分组
   const groupedRecords = filteredRecords.reduce((acc, record) => {
@@ -1136,7 +1478,7 @@ function RecordsPage({ records, setRecords }) {
       <div className="records-summary">
         <span>共 {filteredRecords.length} 条记录</span>
         <span>·</span>
-        <span>总计 {formatDuration(totalDuration)}</span>
+        <span>总计 {formatDuration(totalDuration, "compact")}</span>
       </div>
 
       <div className="records-list">
@@ -1195,29 +1537,66 @@ function SettingsPage() {
   const [checking, setChecking] = useState(false)
   const [updateInfo, setUpdateInfo] = useState(null)
   const [downloading, setDownloading] = useState(false)
-  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [isAndroid, setIsAndroid] = useState(false)
+  const [capacitorReady, setCapacitorReady] = useState(false)
+  
+  // 初始化 Capacitor
+  useEffect(() => {
+    loadCapacitor().then(ready => {
+      setCapacitorReady(ready)
+      if (ready && isNativePlatform() && getPlatform() === 'android') {
+        setIsAndroid(true)
+      }
+    })
+  }, [])
 
-  // 检查更新
+  // 检查更新 - 使用 GitHub API
   const checkUpdate = async () => {
     setChecking(true)
     setUpdateInfo(null)
     
+    console.log('[Update] Checking GitHub releases...')
+    console.log('[Update] Current version:', APP_VERSION)
+    
     try {
-      // 这里使用一个简单的版本检查方式
-      // 实际部署时需要替换为真实的版本服务器
-      const response = await fetch(VERSION_URL + '?t=' + Date.now())
+      const response = await fetch(RELEASE_API)
       
       if (!response.ok) {
-        throw new Error('无法连接服务器')
+        throw new Error(`HTTP ${response.status}: 无法连接 GitHub`)
       }
       
-      const data = await response.json()
+      const release = await response.json()
+      // GitHub tag 格式: v1.7.41 -> 去掉 v 前缀
+      const latestVersion = release.tag_name.replace(/^v/, '')
       
-      if (data.version !== APP_VERSION) {
+      console.log('[Update] GitHub latest version:', latestVersion)
+      
+      // 版本比较
+      const compareVersions = (v1, v2) => {
+        const parts1 = v1.split('.').map(Number)
+        const parts2 = v2.split('.').map(Number)
+        for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+          const p1 = parts1[i] || 0
+          const p2 = parts2[i] || 0
+          if (p1 < p2) return -1
+          if (p1 > p2) return 1
+        }
+        return 0
+      }
+      
+      const needsUpdate = compareVersions(APP_VERSION, latestVersion) < 0
+      
+      if (needsUpdate) {
+        // 解析 release body 为更新日志
+        let changelog = release.body || '暂无更新说明'
+        changelog = changelog.split('\n').filter(line => line.trim()).slice(0, 5).join('\n')
+        
         setUpdateInfo({
           hasUpdate: true,
-          latestVersion: data.version,
-          changelog: data.changelog || '修复了一些问题'
+          latestVersion: latestVersion,
+          changelog: changelog,
+          releaseUrl: release.html_url,
+          publishedAt: release.published_at
         })
       } else {
         setUpdateInfo({
@@ -1226,19 +1605,53 @@ function SettingsPage() {
         })
       }
     } catch (error) {
+      console.error('[Update] Error:', error)
       setUpdateInfo({
         error: true,
-        message: '检查更新失败，请稍后重试'
+        message: `检查更新失败: ${error.message}`
       })
     }
     
     setChecking(false)
   }
 
-  // 下载更新（仅提示用户）
+  // 下载并安装 APK（Android）
+  const downloadAndInstall = async () => {
+    // 打开 GitHub Release 页面下载
+    const url = updateInfo?.releaseUrl || RELEASE_URL
+    
+    Toast.show({ icon: 'loading', content: '正在打开下载页面...', duration: 1000 })
+    
+    try {
+      if (capacitorReady && isNativePlatform()) {
+        await Browser.open({ url })
+      } else {
+        window.open(url, '_blank')
+      }
+    } catch (e) {
+      console.error('Browser open error:', e)
+      window.open(url, '_blank')
+    }
+  }
+
+  // Web 端下载
+  const openReleasePage = async () => {
+    const url = RELEASE_URL
+    
+    if (capacitorReady && isNativePlatform()) {
+      await Browser.open({ url })
+    } else {
+      window.open(url, '_blank')
+    }
+  }
+
+  // 下载更新
   const downloadUpdate = () => {
-    alert('新版本下载地址将发送到您的聊天窗口，请在聊天中下载安装。')
-    // 实际应用中这里应该打开下载链接或调用原生下载
+    if (isAndroid) {
+      downloadAndInstall()
+    } else {
+      openReleasePage()
+    }
   }
 
   return (
@@ -1250,6 +1663,10 @@ function SettingsPage() {
           <div className="setting-item">
             <span className="setting-label">学习追踪器</span>
             <span className="setting-value">v{APP_VERSION}</span>
+          </div>
+          <div className="setting-item">
+            <span className="setting-label">运行平台</span>
+            <span className="setting-value">{isAndroid ? 'android' : 'web'}</span>
           </div>
         </div>
       </section>
@@ -1272,20 +1689,29 @@ function SettingsPage() {
                 <>
                   <div className="update-badge">🎉 发现新版本</div>
                   <div className="update-version">v{updateInfo.latestVersion}</div>
-                  <div className="update-changelog">{updateInfo.changelog}</div>
+                  <div className="update-changelog" style={{ whiteSpace: 'pre-line' }}>{updateInfo.changelog}</div>
                   <button 
                     className="download-btn"
                     onClick={downloadUpdate}
                     disabled={downloading}
                   >
-                    {downloading ? `下载中 ${downloadProgress}%` : '立即更新'}
+                    {downloading ? '打开中...' : isAndroid ? '下载并安装' : '前往下载'}
                   </button>
+                  {!isAndroid && updateInfo.apkUrl && (
+                    <button 
+                      className="download-btn secondary"
+                      onClick={() => window.open(updateInfo.apkUrl, '_blank')}
+                      style={{ marginTop: '8px', background: '#f5f5f5', color: '#333' }}
+                    >
+                      直接下载 APK
+                    </button>
+                  )}
                 </>
               )}
               {!updateInfo.hasUpdate && !updateInfo.error && (
                 <div className="up-to-date">
                   <span className="check-icon">✓</span>
-                  已是最新版本
+                  已是最新版本 v{APP_VERSION}
                 </div>
               )}
               {updateInfo.error && (
@@ -1302,7 +1728,7 @@ function SettingsPage() {
         <div className="settings-card">
           <div className="setting-item">
             <span className="setting-label">存储位置</span>
-            <span className="setting-value">本地浏览器</span>
+            <span className="setting-value">{isAndroid ? '本地存储' : '本地浏览器'}</span>
           </div>
           <div className="setting-item">
             <span className="setting-label">数据安全</span>

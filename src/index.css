@@ -1339,6 +1339,18 @@ body {
   cursor: not-allowed;
 }
 
+.download-btn.secondary {
+  background: #f5f5f5;
+  color: #333;
+  box-shadow: none;
+}
+
+.download-btn.secondary:hover:not(:disabled) {
+  background: #e5e5e5;
+  box-shadow: none;
+  transform: none;
+}
+
 .up-to-date {
   display: flex;
   align-items: center;
@@ -1991,6 +2003,278 @@ body {
   
   .flip-unit-label {
     font-size: 0.5rem;
+  }
+}
+
+/* ========================================
+   番茄钟样式
+   ======================================== */
+
+/* 模式切换 */
+.mode-switch {
+  display: flex;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-lg);
+  padding: 4px;
+  margin-bottom: 1rem;
+  gap: 4px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-btn.active {
+  background: var(--primary);
+  color: white;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3) !important;
+}
+
+.mode-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mode-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 番茄钟信息 */
+.pomodoro-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: linear-gradient(135deg, #fff5f5 0%, #fef3c7 100%);
+  border-radius: var(--radius-lg);
+}
+
+.pomodoro-phase {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pomodoro-progress {
+  width: 100%;
+  height: 8px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.pomodoro-progress .progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #ef4444, #f97316);
+  border-radius: 4px;
+  transition: width 1s linear;
+}
+
+.pomodoro-count {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+}
+
+.pomodoro-count .tomato {
+  font-size: 16px;
+  animation: tomatoPop 0.3s ease;
+}
+
+.pomodoro-count .more {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+
+.pomodoro-help-btn {
+  background: none;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  transition: all 0.2s;
+}
+
+.pomodoro-help-btn:active {
+  transform: scale(0.9);
+  background: var(--bg-tertiary);
+}
+
+/* 番茄钟说明弹窗 */
+.pomodoro-help {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.pomodoro-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.pomodoro-help-header h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.pomodoro-help-header .close-btn {
+  background: var(--bg-tertiary);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.pomodoro-help-content .help-section {
+  margin-bottom: 20px;
+}
+
+.pomodoro-help-content .help-section h3 {
+  font-size: 15px;
+  margin: 0 0 10px;
+  color: var(--text-primary);
+}
+
+.pomodoro-help-content .help-section p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0 0 8px;
+}
+
+.help-card {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.help-card-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.help-card-item .help-icon {
+  font-size: 20px;
+}
+
+.help-card-item strong {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.help-card-item p {
+  font-size: 13px !important;
+  color: var(--text-secondary) !important;
+  margin: 2px 0 0 0 !important;
+}
+
+.help-steps {
+  padding-left: 20px;
+  margin: 0;
+}
+
+.help-steps li {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  margin-bottom: 4px;
+}
+
+.help-tips {
+  padding-left: 20px;
+  margin: 0;
+}
+
+.help-tips li {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  margin-bottom: 4px;
+}
+
+@keyframes tomatoPop {
+  0% { transform: scale(0); }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* 番茄钟控制按钮 */
+.control-btn.skip {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.control-btn.skip:hover {
+  background: var(--border);
+}
+
+.control-btn.reset {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.control-btn.reset:hover {
+  background: var(--border);
+}
+
+/* 番茄钟阶段颜色 */
+.timer-card.pomodoro-focus {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+}
+
+.timer-card.pomodoro-break {
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+}
+
+/* 响应式调整 */
+@media (max-width: 640px) {
+  .mode-switch {
+    margin-bottom: 0.75rem;
+  }
+  
+  .mode-btn {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  
+  .pomodoro-info {
+    padding: 12px;
+    gap: 8px;
+  }
+  
+  .pomodoro-phase {
+    font-size: 16px;
   }
 }
 

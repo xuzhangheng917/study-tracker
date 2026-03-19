@@ -1,0 +1,14 @@
+{
+  "version": "1.0.6",
+  "versionCode": 6,
+  "apkUrl": "https://raw.githubusercontent.com/openclaw/study-tracker/main/study-tracker.apk",
+  "releaseUrl": "https://github.com/xuzhangheng917/study-tracker/releases",
+  "changelog": [
+    "✅ 新增 APK 版本更新功能",
+    "✅ 支持应用内直接下载安装",
+    "✅ 显示下载进度",
+    "✅ 优化设置页面 UI"
+  ],
+  "forceUpdate": false,
+  "minVersion": "1.0.0"
+}

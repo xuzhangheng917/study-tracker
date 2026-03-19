@@ -2,9 +2,13 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
-export default defineConfig({
-  base: '/study-tracker/',
-  plugins: [
+export default defineConfig(({ mode }) => {
+  // Capacitor 构建使用相对路径，Web 部署使用绝对路径
+  const base = process.env.CAPACITOR_BUILD ? './' : '/study-tracker/'
+  
+  return {
+    base,
+    plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -77,5 +81,6 @@ export default defineConfig({
     port: 3000,
     host: '0.0.0.0',
     open: true
+  }
   }
 })

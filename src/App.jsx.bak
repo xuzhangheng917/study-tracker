@@ -1,0 +1,1831 @@
+import React, { useState, useEffect, useRef } from 'react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Cell, LabelList } from 'recharts'
+import { Popup, Form, Input, Button, Selector, DatePicker, Space, Stepper, Dialog, Toast } from 'antd-mobile'
+import './index.css'
+
+// 动态导入 Capacitor（仅在原生平台使用）
+let Capacitor = null
+let Browser = null
+let Filesystem = null
+let Directory = null
+let AppLauncher = null
+
+const loadCapacitor = async () => {
+  try {
+    const capacitorCore = await import('@capacitor/core')
+    const capacitorBrowser = await import('@capacitor/browser')
+    const capacitorFilesystem = await import('@capacitor/filesystem')
+    const capacitorAppLauncher = await import('@capacitor/app-launcher')
+    
+    Capacitor = capacitorCore.Capacitor
+    Browser = capacitorBrowser.Browser
+    Filesystem = capacitorFilesystem.Filesystem
+    Directory = capacitorFilesystem.Directory
+    AppLauncher = capacitorAppLauncher.AppLauncher
+    
+    return true
+  } catch (e) {
+    console.log('Capacitor not available:', e)
+    return false
+  }
+}
+
+// 是否在原生平台
+const isNativePlatform = () => Capacitor?.isNativePlatform?.() || false
+const getPlatform = () => Capacitor?.getPlatform?.() || 'web'
+
+// 获取本地日期字符串 (避免时区问题)
+const getLocalDateString = (date = new Date()) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+// 当前版本 - 与 GitHub Release 保持同步
+const APP_VERSION = '1.7.41'
+const GITHUB_REPO = 'xuzhangheng917/study-tracker'
+const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
+const RELEASE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`
+
+// 从 localStorage 加载数据
+const loadData = () => {
+  try {
+    const data = localStorage.getItem('studyRecords')
+    return data ? JSON.parse(data) : []
+  } catch {
+    return []
+  }
+}
+
+// 保存数据到 localStorage
+const saveData = (records) => {
+  localStorage.setItem('studyRecords', JSON.stringify(records))
+}
+
+// 保存计时器状态
+const saveTimerState = (state) => {
+  localStorage.setItem('timerState', JSON.stringify(state))
+}
+
+// 加载计时器状态
+const loadTimerState = () => {
+  try {
+    const data = localStorage.getItem('timerState')
+    return data ? JSON.parse(data) : null
+  } catch {
+    return null
+  }
+}
+
+// 清除计时器状态
+const clearTimerState = () => {
+  localStorage.removeItem('timerState')
+}
+
+// 格式化时长（翻页时钟格式）
+const formatDurationForFlip = (seconds) => {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  return {
+    hours: String(h).padStart(2, '0'),
+    minutes: String(m).padStart(2, '0'),
+    seconds: String(s).padStart(2, '0')
+  }
+}
+
+// 格式化时长
+const formatDuration = (seconds) => {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) {
+    return `${h}小时${m}分${s}秒`
+  }
+  if (m > 0) {
+    return `${m}分${s}秒`
+  }
+  return `${s}秒`
+}
+
+// 翻页数字组件
+function FlipDigit({ value, label }) {
+  const [currentValue, setCurrentValue] = useState(value)
+  const [prevValue, setPrevValue] = useState(value)
+  const [isFlipping, setIsFlipping] = useState(false)
+  
+  useEffect(() => {
+    if (value !== currentValue) {
+      setIsFlipping(true)
+      setPrevValue(currentValue)
+      
+      const timer = setTimeout(() => {
+        setCurrentValue(value)
+        setIsFlipping(false)
+      }, 300)
+      
+      return () => clearTimeout(timer)
+    }
+  }, [value, currentValue])
+  
+  return (
+    <div className="flip-unit">
+      <div className={`flip-digit ${isFlipping ? 'flipping' : ''}`}>
+        {/* 上半部分 - 当前值 */}
+        <div className="flip-card flip-card-top">
+          <div className="flip-card-face flip-card-front">
+            <span>{currentValue}</span>
+          </div>
+          <div className="flip-card-face flip-card-back">
+            <span>{prevValue}</span>
+          </div>
+        </div>
+        
+        {/* 下半部分 */}
+        <div className="flip-card flip-card-bottom">
+          <div className="flip-card-face flip-card-front">
+            <span>{currentValue}</span>
+          </div>
+          <div className="flip-card-face flip-card-back">
+            <span>{prevValue}</span>
+          </div>
+        </div>
+      </div>
+      {label && <span className="flip-unit-label">{label}</span>}
+    </div>
+  )
+}
+
+// 翻页时钟组件
+function FlipClock({ seconds }) {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  
+  const time = {
+    h1: String(Math.floor(h / 10)),
+    h2: String(h % 10),
+    m1: String(Math.floor(m / 10)),
+    m2: String(m % 10),
+    s1: String(Math.floor(s / 10)),
+    s2: String(s % 10)
+  }
+  
+  return (
+    <div className="flip-clock">
+      <div className="flip-group">
+        <FlipDigit value={time.h1} />
+        <FlipDigit value={time.h2} label="时" />
+      </div>
+      <span className="flip-separator">:</span>
+      <div className="flip-group">
+        <FlipDigit value={time.m1} />
+        <FlipDigit value={time.m2} label="分" />
+      </div>
+      <span className="flip-separator">:</span>
+      <div className="flip-group">
+        <FlipDigit value={time.s1} />
+        <FlipDigit value={time.s2} label="秒" />
+      </div>
+    </div>
+  )
+}
+
+// 图表滚动到今天
+function useScrollToToday(displayChartDays) {
+  const chartRef = useRef(null)
+  const today = getLocalDateString()
+  const hasScrolled = useRef(false)
+  
+  useEffect(() => {
+    if (chartRef.current && displayChartDays.length > 0 && !hasScrolled.current) {
+      const todayIndex = displayChartDays.findIndex(d => d.date === today)
+      if (todayIndex >= 0) {
+        const container = chartRef.current
+        const barWidth = 48 + 8 // width + gap
+        const containerWidth = container.clientWidth
+        const scrollPosition = todayIndex * barWidth - containerWidth / 2 + barWidth / 2
+        container.scrollTo({
+          left: Math.max(0, scrollPosition),
+          behavior: 'smooth'
+        })
+        hasScrolled.current = true
+      }
+    }
+  }, [displayChartDays, today])
+  
+  // 重置滚动状态当日期范围变化时
+  useEffect(() => {
+    hasScrolled.current = false
+  }, [displayChartDays.length])
+  
+  return chartRef
+}
+
+// 格式化时长（短格式，用于概览卡片）
+const formatDurationCompact = (seconds) => {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) {
+    return `${h}时${m}分${s}秒`
+  }
+  if (m > 0) {
+    return `${m}分${s}秒`
+  }
+  return `${s}秒`
+}
+
+// 格式化时长（短格式，用于饼图中心）
+const formatDurationShort2 = (seconds) => {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (h > 0 && m === 0) {
+    return `${h}小时`
+  }
+  if (h > 0) {
+    return `${h}时${m}分`
+  }
+  if (m > 0) {
+    return `${m}分钟`
+  }
+  return `${seconds}秒`
+}
+
+// 格式化时长（短格式）
+const formatDurationShort = (seconds) => {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  if (h > 0) {
+    return `${h}h ${m}m`
+  }
+  return `${m}m`
+}
+
+// 格式化日期
+const formatDate = (dateStr) => {
+  const date = new Date(dateStr)
+  return `${date.getMonth() + 1}月${date.getDate()}日`
+}
+
+// 格式化星期
+const formatWeekday = (dateStr) => {
+  const days = ['日', '一', '二', '三', '四', '五', '六']
+  const date = new Date(dateStr)
+  return `周${days[date.getDay()]}`
+}
+
+// 预设科目颜色
+const defaultSubjectColors = {
+  '编程': '#6366f1',
+  '英语': '#ec4899',
+  '数学': '#f59e0b',
+  '阅读': '#10b981',
+  '写作': '#8b5cf6',
+  '物理': '#06b6d4',
+  '化学': '#f97316',
+  '其他': '#6b7280'
+}
+
+// 加载科目列表
+const loadSubjects = () => {
+  try {
+    const data = localStorage.getItem('subjects')
+    return data ? JSON.parse(data) : Object.keys(defaultSubjectColors)
+  } catch {
+    return Object.keys(defaultSubjectColors)
+  }
+}
+
+// 保存科目列表
+const saveSubjects = (subjects) => {
+  localStorage.setItem('subjects', JSON.stringify(subjects))
+}
+
+// 为科目生成颜色
+const getSubjectColor = (subject) => {
+  if (defaultSubjectColors[subject]) {
+    return defaultSubjectColors[subject]
+  }
+  // 根据科目名生成固定颜色
+  const colors = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#06b6d4', '#f97316', '#ef4444', '#14b8a6', '#a855f7']
+  let hash = 0
+  for (let i = 0; i < subject.length; i++) {
+    hash = subject.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return colors[Math.abs(hash) % colors.length]
+}
+
+// 番茄钟默认设置
+const POMODORO_DEFAULTS = {
+  focusDuration: 25 * 60,      // 25分钟
+  shortBreak: 5 * 60,          // 5分钟短休息
+  longBreak: 15 * 60,          // 15分钟长休息
+  longBreakInterval: 4         // 每4个番茄后长休息
+}
+
+// 保存番茄钟状态
+const savePomodoroState = (state) => {
+  localStorage.setItem('pomodoroState', JSON.stringify(state))
+}
+
+// 加载番茄钟状态
+const loadPomodoroState = () => {
+  try {
+    const data = localStorage.getItem('pomodoroState')
+    return data ? JSON.parse(data) : null
+  } catch {
+    return null
+  }
+}
+
+// 生成饼图渐变
+const generatePieChartGradient = (stats, total) => {
+  const entries = Object.entries(stats).sort((a, b) => b[1] - a[1])
+  if (entries.length === 0) return 'conic-gradient(#e2e8f0 0deg, #e2e8f0 360deg)'
+  
+  let currentAngle = 0
+  const gradientStops = entries.map(([subject, duration]) => {
+    const percentage = (duration / total) * 100
+    const angle = (percentage / 100) * 360
+    const color = getSubjectColor(subject)
+    const start = currentAngle
+    currentAngle += angle
+    return `${color} ${start}deg ${currentAngle}deg`
+  })
+  
+  return `conic-gradient(${gradientStops.join(', ')})`
+}
+
+// ============================================
+// 计时器页面
+// ============================================
+function TimerPage({ records, setRecords }) {
+  // 计时模式：normal 普通计时 | pomodoro 番茄钟
+  const [timerMode, setTimerMode] = useState('normal')
+  
+  // 普通计时模式的秒数（正计时）
+  const [normalSeconds, setNormalSeconds] = useState(0)
+  
+  // 番茄钟说明弹窗
+  const [showPomodoroHelp, setShowPomodoroHelp] = useState(false)
+  
+  // 番茄钟状态
+  const [pomodoroPhase, setPomodoroPhase] = useState('focus')
+  const [pomodoroCount, setPomodoroCount] = useState(0)
+  const [pomodoroSeconds, setPomodoroSeconds] = useState(POMODORO_DEFAULTS.focusDuration)
+  
+  const focusDuration = POMODORO_DEFAULTS.focusDuration
+  const shortBreak = POMODORO_DEFAULTS.shortBreak
+  const longBreak = POMODORO_DEFAULTS.longBreak
+  
+  // 普通计时状态
+  
+  const [subject, setSubject] = useState('编程')
+  const [customSubject, setCustomSubject] = useState('')
+  const [showCustom, setShowCustom] = useState(false)
+  const [subjects, setSubjects] = useState(loadSubjects)
+  const intervalRef = useRef(null)
+  const longPressRef = useRef(null)
+  const startTimeRef = useRef(null)
+  const pomodoroStartTimeRef = useRef(null) // 番茄钟开始时间
+  
+  // 当前模式的秒数（派生值）
+  const seconds = timerMode === 'pomodoro' ? pomodoroSeconds : normalSeconds
+  const [isRunning, setIsRunning] = useState(false)
+
+  // 保存科目列表
+  useEffect(() => {
+    saveSubjects(subjects)
+  }, [subjects])
+
+  // 保存计时器状态
+  useEffect(() => {
+    // 计算当前阶段时长
+    let phaseDuration = null
+    if (timerMode === 'pomodoro') {
+      phaseDuration = pomodoroPhase === 'focus' ? focusDuration : 
+                      pomodoroPhase === 'longBreak' ? longBreak : shortBreak
+    }
+    
+    saveTimerState({
+      seconds: timerMode === 'pomodoro' ? pomodoroSeconds : normalSeconds,
+      subject,
+      customSubject,
+      showCustom,
+      isRunning,
+      startTime: startTimeRef.current,
+      isPomodoro: timerMode === 'pomodoro',
+      pomodoroPhase,
+      phaseDuration
+    })
+  }, [normalSeconds, pomodoroSeconds, subject, customSubject, showCustom, isRunning, timerMode, pomodoroPhase])
+  
+  // 保存模式
+  useEffect(() => {
+    localStorage.setItem('timerMode', timerMode)
+  }, [timerMode])
+  
+  // 添加新科目
+  const addSubject = (name) => {
+    const trimmed = name.trim()
+    if (trimmed && !subjects.includes(trimmed)) {
+      setSubjects([...subjects, trimmed])
+      return true
+    }
+    return false
+  }
+  
+  // 删除科目
+  const deleteSubject = (s) => {
+    Dialog.confirm({
+      content: `确定要删除科目「${s}」吗？`,
+      onConfirm: () => {
+        const newSubjects = subjects.filter(sub => sub !== s)
+        setSubjects(newSubjects)
+        if (subject === s) {
+          setSubject(newSubjects[0] || '')
+        }
+      }
+    })
+  }
+  
+  // 长按处理
+  const handleTouchStart = (s) => {
+    longPressRef.current = setTimeout(() => {
+      deleteSubject(s)
+    }, 500)
+  }
+  
+  const handleTouchEnd = () => {
+    if (longPressRef.current) {
+      clearTimeout(longPressRef.current)
+      longPressRef.current = null
+    }
+  }
+
+  // 单一计时器 interval
+  useEffect(() => {
+    if (!isRunning) return
+    const id = setInterval(() => {
+      if (timerMode === 'pomodoro') {
+        setPomodoroSeconds(s => {
+          const newSeconds = s - 1
+          if (newSeconds <= 0) {
+            setTimeout(() => handlePomodoroComplete(), 0)
+            return 0
+          }
+          return newSeconds
+        })
+      } else {
+        setNormalSeconds(s => s + 1)
+      }
+    }, 1000)
+    return () => clearInterval(id)
+  }, [isRunning, timerMode])
+
+  // 同步 timerMode 到 ref
+  const timerModeRef = useRef(timerMode)
+  useEffect(() => {
+    timerModeRef.current = timerMode
+  }, [timerMode])
+
+  // 初始化时如果是运行状态，启动定时器
+  useEffect(() => {
+    // 可以在这里添加初始化逻辑
+  }, [])
+
+  // 普通计时控制
+  const handleNormalStart = () => {
+    setIsRunning(true)
+    startTimeRef.current = Date.now() - normalSeconds * 1000
+  }
+  
+  const handleNormalPause = () => {
+    setIsRunning(false)
+    startTimeRef.current = null
+  }
+
+  const handleNormalStop = () => {
+    if (normalSeconds > 0) {
+      const record = {
+        id: Date.now(),
+        subject: showCustom ? customSubject : subject,
+        duration: normalSeconds,
+        date: getLocalDateString(),
+        timestamp: Date.now()
+      }
+      setRecords([record, ...records])
+    }
+    setIsRunning(false)
+    setNormalSeconds(0)
+    setCustomSubject('')
+    setShowCustom(false)
+    startTimeRef.current = null
+  }
+
+  // 当前模式的控制函数
+  const handleStart = () => {
+    
+    
+    
+    setIsRunning(true)
+    if (timerMode === 'pomodoro') {
+      pomodoroStartTimeRef.current = Date.now()
+    } else {
+      startTimeRef.current = Date.now() - normalSeconds * 1000
+    }
+  }
+  
+  const handlePause = () => {
+    
+    
+    setIsRunning(false)
+    startTimeRef.current = null
+    pomodoroStartTimeRef.current = null
+  }
+
+  const handleStop = () => {
+    if (timerMode === 'pomodoro') {
+      handlePomodoroReset()
+    } else {
+      handleNormalStop()
+    }
+  }
+
+  // 番茄钟：获取当前阶段时长
+  const getCurrentPhaseDuration = () => {
+    switch (pomodoroPhase) {
+      case 'focus': return focusDuration
+      case 'shortBreak': return shortBreak
+      case 'longBreak': return longBreak
+      default: return focusDuration
+    }
+  }
+
+  // 番茄钟：获取当前阶段名称
+  const getPhaseName = () => {
+    switch (pomodoroPhase) {
+      case 'focus': return '专注'
+      case 'shortBreak': return '短休息'
+      case 'longBreak': return '长休息'
+      default: return '专注'
+    }
+  }
+
+  // 番茄钟：获取下一个阶段
+  const getNextPhase = () => {
+    if (pomodoroPhase === 'focus') {
+      // 完成一个番茄后
+      const newCount = pomodoroCount + 1
+      if (newCount % POMODORO_DEFAULTS.longBreakInterval === 0) {
+        return 'longBreak'
+      }
+      return 'shortBreak'
+    }
+    return 'focus'
+  }
+
+  // 番茄钟完成处理
+  const handlePomodoroComplete = () => {
+    setIsRunning(false)
+    
+    if (pomodoroPhase === 'focus') {
+      // 完成一个番茄
+      const newCount = pomodoroCount + 1
+      setPomodoroCount(newCount)
+      
+      // 保存学习记录
+      const record = {
+        id: Date.now(),
+        subject: showCustom ? customSubject : subject,
+        duration: focusDuration,
+        date: getLocalDateString(),
+        timestamp: Date.now()
+      }
+      setRecords([record, ...records])
+      
+      // 显示提示
+      Toast.show({
+        icon: 'success',
+        content: `🍅 第 ${newCount} 个番茄完成！`,
+        duration: 2000
+      })
+      
+      // 切换到休息
+      const nextPhase = getNextPhase()
+      setPomodoroPhase(nextPhase)
+      setPomodoroSeconds(nextPhase === 'longBreak' ? longBreak : shortBreak)
+    } else {
+      // 休息结束
+      Toast.show({
+        icon: 'success',
+        content: '休息结束，开始下一个番茄！',
+        duration: 2000
+      })
+      setPomodoroPhase('focus')
+      setPomodoroSeconds(focusDuration)
+    }
+  }
+
+  // 番茄钟：开始
+  const handlePomodoroStart = () => {
+    if (pomodoroSeconds === 0) {
+      setPomodoroSeconds(getCurrentPhaseDuration())
+    }
+    
+    setIsRunning(true)
+    pomodoroStartTimeRef.current = Date.now()
+  }
+
+  // 番茄钟：跳过当前阶段
+  const handlePomodoroSkip = () => {
+    const nextPhase = getNextPhase()
+    setPomodoroPhase(nextPhase)
+    setPomodoroSeconds(nextPhase === 'focus' ? focusDuration : (nextPhase === 'longBreak' ? longBreak : shortBreak))
+    setIsRunning(false)
+    
+    if (pomodoroPhase === 'focus') {
+      setPomodoroCount(prev => prev + 1)
+    }
+  }
+
+  // 番茄钟：重置
+  const handlePomodoroReset = () => {
+    setIsRunning(false)
+    setPomodoroPhase('focus')
+    setPomodoroCount(0)
+    setPomodoroSeconds(focusDuration)
+  }
+
+  // 切换计时模式（停止计时，保持时间）
+  const handleModeSwitch = (mode) => {
+    if (mode === timerMode) return
+    // 立即清除 interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    
+    setIsRunning(false)
+    setTimerMode(mode)
+  }
+
+  // 计算番茄钟进度
+  const getPomodoroProgress = () => {
+    const total = getCurrentPhaseDuration()
+    const elapsed = total - pomodoroSeconds
+    return Math.round((elapsed / total) * 100)
+  }
+
+  return (
+    <div className="page timer-page">
+      {/* 模式切换 */}
+      <div className="mode-switch">
+        <button 
+          className={`mode-btn ${timerMode === 'normal' ? 'active' : ''} ${isRunning ? 'disabled' : ''}`}
+          disabled={isRunning}
+          onClick={() => setTimerMode('normal')}
+        >
+          ⏱️ 计时
+        </button>
+        <button 
+          className={`mode-btn ${timerMode === 'pomodoro' ? 'active' : ''} ${isRunning ? 'disabled' : ''}`}
+          disabled={isRunning}
+          onClick={() => setTimerMode('pomodoro')}
+        >
+          🍅 番茄钟
+        </button>
+      </div>
+
+      <div className="timer-card">
+        {/* 番茄钟额外信息 */}
+        {timerMode === 'pomodoro' && (
+          <div className="pomodoro-info">
+            <span className="pomodoro-phase">{getPhaseName()}</span>
+            <div className="pomodoro-progress">
+              <div className="progress-bar" style={{ width: `${getPomodoroProgress()}%` }} />
+            </div>
+            <div className="pomodoro-count">
+              {Array.from({ length: Math.min(pomodoroCount, 8) }).map((_, i) => (
+                <span key={i} className="tomato">🍅</span>
+              ))}
+              {pomodoroCount > 8 && <span className="more">+{pomodoroCount - 8}</span>}
+              <button className="pomodoro-help-btn" onClick={() => setShowPomodoroHelp(true)}>❓</button>
+            </div>
+          </div>
+        )}
+
+        <div className="timer-display">
+          <FlipClock seconds={seconds} />
+          {isRunning && <div className="timer-pulse" />}
+        </div>
+
+        <div className="subject-selector">
+          <label>选择科目</label>
+          <div className="subject-buttons">
+            {subjects.map(s => (
+              <button
+                key={s}
+                className={`subject-btn ${!showCustom && subject === s ? 'active' : ''}`}
+                style={{ '--color': getSubjectColor(s) }}
+                onClick={() => { setSubject(s); setShowCustom(false) }}
+                onTouchStart={() => handleTouchStart(s)}
+                onTouchEnd={handleTouchEnd}
+                onTouchCancel={handleTouchEnd}
+              >
+                {s}
+              </button>
+            ))}
+            <button
+              className={`subject-btn custom ${showCustom ? 'active' : ''}`}
+              onClick={() => { setShowCustom(true); setCustomSubject('') }}
+            >
+              +
+            </button>
+          </div>
+          {showCustom && (
+            <input
+              type="text"
+              className="custom-subject-input"
+              placeholder="输入科目名称..."
+              value={customSubject}
+              onChange={(e) => setCustomSubject(e.target.value)}
+              onBlur={() => {
+                if (customSubject.trim()) {
+                  addSubject(customSubject.trim())
+                  setSubject(customSubject.trim())
+                  setShowCustom(false)
+                  setCustomSubject('')
+                } else {
+                  setShowCustom(false)
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.target.blur()
+                }
+              }}
+              autoFocus
+            />
+          )}
+        </div>
+
+        <div className="timer-controls">
+          {!isRunning ? (
+            <>
+              <button className="control-btn start" onClick={handleStart}>
+                <span className="icon">▶</span>
+                {timerMode === 'pomodoro' 
+                  ? (pomodoroSeconds === focusDuration || pomodoroSeconds === shortBreak || pomodoroSeconds === longBreak ? '开始' : '继续')
+                  : (normalSeconds > 0 ? '继续' : '开始')}
+              </button>
+              {timerMode === 'pomodoro' && (
+                <button className="control-btn skip" onClick={handlePomodoroSkip}>
+                  <span className="icon">⏭</span>
+                  跳过
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button className="control-btn pause" onClick={handlePause}>
+                <span className="icon">⏸</span>
+                暂停
+              </button>
+              {timerMode === 'pomodoro' && (
+                <button className="control-btn skip" onClick={handlePomodoroSkip}>
+                  <span className="icon">⏭</span>
+                  跳过
+                </button>
+              )}
+            </>
+          )}
+          {timerMode === 'normal' && normalSeconds > 0 && (
+            <button className="control-btn stop" onClick={handleStop}>
+              <span className="icon">⏹</span>
+              保存
+            </button>
+          )}
+          {timerMode === 'pomodoro' && (
+            <button className="control-btn reset" onClick={handlePomodoroReset}>
+              <span className="icon">🔄</span>
+              重置
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 今日统计摘要 */}
+      <TodaySummary records={records} pomodoroCount={pomodoroCount} />
+    </div>
+  )
+}
+
+// 今日摘要
+function TodaySummary({ records, pomodoroCount }) {
+  const today = getLocalDateString()
+  const todayRecords = records.filter(r => r.date === today)
+  const todayTotal = todayRecords.reduce((sum, r) => sum + r.duration, 0)
+
+  return (
+    <div className="today-summary">
+      <div className="summary-item">
+        <span className="summary-label">今日学习</span>
+        <span className="summary-value">{formatDuration(todayTotal)}</span>
+      </div>
+      <div className="summary-divider" />
+      <div className="summary-item">
+        <span className="summary-label">今日次数</span>
+        <span className="summary-value">{todayRecords.length} 次</span>
+      </div>
+      {pomodoroCount > 0 && (
+        <>
+          <div className="summary-divider" />
+          <div className="summary-item">
+            <span className="summary-label">番茄</span>
+            <span className="summary-value">🍅 {pomodoroCount}</span>
+          </div>
+        </>
+      )}
+
+      {/* 番茄钟说明弹窗 */}
+      <Popup
+        visible={showPomodoroHelp}
+        onMaskClick={() => setShowPomodoroHelp(false)}
+        position='bottom'
+        bodyStyle={{ borderRadius: '16px 16px 0 0', minHeight: '60vh', padding: '24px' }}
+      >
+        <div className="pomodoro-help">
+          <div className="pomodoro-help-header">
+            <h2>🍅 番茄钟使用说明</h2>
+            <button className="close-btn" onClick={() => setShowPomodoroHelp(false)}>✕</button>
+          </div>
+          
+          <div className="pomodoro-help-content">
+            <div className="help-section">
+              <h3>📌 什么是番茄钟？</h3>
+              <p>番茄钟是一种高效的时间管理方法，由弗朗西斯科·西里洛于1980年代发明。通过将工作时间分割成固定的时间段（番茄），每个番茄之间休息，帮助你保持专注力。</p>
+            </div>
+
+            <div className="help-section">
+              <h3>⏰ 时间设置</h3>
+              <div className="help-card">
+                <div className="help-card-item">
+                  <span className="help-icon">🎯</span>
+                  <div>
+                    <strong>专注时间</strong>
+                    <p>25 分钟</p>
+                  </div>
+                </div>
+                <div className="help-card-item">
+                  <span className="help-icon">☕</span>
+                  <div>
+                    <strong>短休息</strong>
+                    <p>5 分钟</p>
+                  </div>
+                </div>
+                <div className="help-card-item">
+                  <span className="help-icon">🌴</span>
+                  <div>
+                    <strong>长休息</strong>
+                    <p>每完成 4 个番茄后，休息 15 分钟</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="help-section">
+              <h3>📋 使用步骤</h3>
+              <ol className="help-steps">
+                <li>切换到 🍅 <strong>番茄钟</strong> 模式</li>
+                <li>选择你要学习的<strong>科目</strong></li>
+                <li>点击 <strong>▶ 开始</strong> 按钮，专注 25 分钟</li>
+                <li>专注结束后，自动进入 <strong>5 分钟休息</strong></li>
+                <li>休息结束后，自动开始下一个 <strong>25 分钟专注</strong></li>
+                <li>每完成 <strong>4 个番茄</strong>，享受一次 <strong>15 分钟长休息</strong></li>
+              </ol>
+            </div>
+
+            <div className="help-section">
+              <h3>💡 使用技巧</h3>
+              <ul className="help-tips">
+                <li>🎯 专注期间尽量<strong>不要被打断</strong>，如果被打断建议重新开始</li>
+                <li>📱 专注期间<strong>放下手机</strong>，专注于学习</li>
+                <li>☕ 休息时<strong>站起来活动</strong>，喝水或拉伸</li>
+                <li>📊 每个番茄钟结束后会<strong>自动记录</strong>学习时长到学习记录中</li>
+                <li>⏭ 如果需要提前结束，可以点击<strong>跳过</strong>按钮</li>
+              </ul>
+            </div>
+
+            <div className="help-section">
+              <h3>🔔 注意事项</h3>
+              <ul className="help-tips">
+                <li>计时器运行时<strong>不能切换</strong>到普通计时模式</li>
+                <li>切换模式前请先<strong>暂停或停止</strong>当前计时</li>
+                <li>番茄钟记录会显示在<strong>记录</strong>页面和<strong>统计</strong>页面中</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </Popup>
+    </div>
+  )
+}
+
+// ============================================
+// 统计页面
+// ============================================
+function StatsPage({ records }) {
+  const today = getLocalDateString()
+  const [startDate, setStartDate] = useState(today)
+  const [endDate, setEndDate] = useState(today)
+  const [showDatePicker, setShowDatePicker] = useState(false)
+
+  // 筛选日期范围内的记录
+  const filteredRecords = records.filter(r => r.date >= startDate && r.date <= endDate)
+  
+  // 按科目统计
+  const subjectStats = filteredRecords.reduce((acc, record) => {
+    acc[record.subject] = (acc[record.subject] || 0) + record.duration
+    return acc
+  }, {})
+
+  // 按日期统计（用于图表，使用所有记录）
+  const allDailyStats = records.reduce((acc, record) => {
+    acc[record.date] = (acc[record.date] || 0) + record.duration
+    return acc
+  }, {})
+
+  // 按日期统计（用于筛选范围内的统计）
+  const dailyStats = filteredRecords.reduce((acc, record) => {
+    acc[record.date] = (acc[record.date] || 0) + record.duration
+    return acc
+  }, {})
+
+  // 计算日期范围内的天数
+  const getDaysInRange = () => {
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+    const days = []
+    const current = new Date(start)
+    while (current <= end) {
+      days.push(getLocalDateString(current))
+      current.setDate(current.getDate() + 1)
+    }
+    return days
+  }
+
+  // 计算当前选中的天数
+  const getSelectedDays = () => {
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+    const diffTime = Math.abs(end - start)
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1
+    return diffDays
+  }
+
+  // 获取图表数据（默认显示最近7天，最多14天）
+  const daysInRange = getDaysInRange()
+  const selectedDays = getSelectedDays()
+  
+  // 获取最近N天的日期
+  const getRecentDays = (n) => {
+    const days = []
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      days.push(getLocalDateString(d))
+    }
+    return days
+  }
+
+  // 获取图表数据
+  // 如果选择的是今天，图表显示最近7天趋势（使用所有数据）
+  const displayChartDays = (selectedDays === 1) 
+    ? getRecentDays(7).map(d => ({
+        date: d,
+        duration: allDailyStats[d] || 0
+      }))
+    : daysInRange.map(d => ({
+        date: d,
+        duration: dailyStats[d] || 0
+      }))
+  
+  const maxDuration = Math.max(...displayChartDays.map(d => d.duration), 1)
+  const totalDuration = Object.values(subjectStats).reduce((a, b) => a + b, 0)
+
+  // 图表滚动到今天
+  const chartRef = useScrollToToday(displayChartDays)
+  
+  // 图表宽度
+  const chartWidth = displayChartDays.length <= 7 ? '100%' : displayChartDays.length * 48
+
+  // 快捷选择
+  const setQuickRange = (days) => {
+    const end = new Date()
+    const start = new Date()
+    if (days === 1) {
+      // 今天
+      setStartDate(today)
+      setEndDate(today)
+    } else {
+      start.setDate(start.getDate() - days + 1)
+      setStartDate(getLocalDateString(start))
+      setEndDate(getLocalDateString(end))
+    }
+    setShowDatePicker(false)
+  }
+
+  return (
+    <div className="page stats-page">
+      {/* 日期选择器 */}
+      <section className="date-picker-section">
+        <div className="date-range-display" onClick={() => setShowDatePicker(!showDatePicker)}>
+          <span className="date-range-icon">📅</span>
+          <span className="date-range-text">{formatDate(startDate)} - {formatDate(endDate)}</span>
+          <span className="date-range-count">({selectedDays}天)</span>
+          <span className="date-range-arrow">{showDatePicker ? '▲' : '▼'}</span>
+        </div>
+        
+        {showDatePicker && (
+          <div className="date-picker-panel">
+            <div className="quick-range-buttons">
+              <button onClick={() => setQuickRange(1)} className={getSelectedDays() === 1 ? 'active' : ''}>今天</button>
+              <button onClick={() => setQuickRange(7)} className={getSelectedDays() === 7 ? 'active' : ''}>7天</button>
+              <button onClick={() => setQuickRange(14)} className={getSelectedDays() === 14 ? 'active' : ''}>14天</button>
+              <button onClick={() => setQuickRange(30)} className={getSelectedDays() >= 30 ? 'active' : ''}>30天</button>
+            </div>
+            <div className="date-inputs">
+              <div className="date-input-group">
+                <label>开始日期</label>
+                <input 
+                  type="date" 
+                  value={startDate} 
+                  onChange={(e) => setStartDate(e.target.value)}
+                  max={endDate}
+                />
+              </div>
+              <div className="date-input-group">
+                <label>结束日期</label>
+                <input 
+                  type="date" 
+                  value={endDate} 
+                  onChange={(e) => setEndDate(e.target.value)}
+                  min={startDate}
+                  max={today}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* 总览卡片 */}
+      <div className="stats-overview">
+        <div className="overview-card">
+          <div className="overview-icon">📚</div>
+          <div className="overview-content">
+            <span className="overview-value">{filteredRecords.length}</span>
+            <span className="overview-label">学习次数</span>
+          </div>
+        </div>
+        <div className="overview-card">
+          <div className="overview-icon">⏱️</div>
+          <div className="overview-content">
+            <span className="overview-value">{formatDurationCompact(totalDuration)}</span>
+            <span className="overview-label">累计时长</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 图表 */}
+      <section className="chart-section">
+        <h2>学习趋势 {displayChartDays.length > 7 && <span className="chart-hint">← 滑动查看 →</span>}</h2>
+        <div className="chart-container" ref={chartRef} style={{ overflowX: displayChartDays.length > 7 ? 'auto' : 'visible' }}>
+          <ResponsiveContainer width={chartWidth} height={200}>
+            <BarChart data={displayChartDays} margin={{ top: 20, right: 5, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+              <XAxis 
+                dataKey="date" 
+                tick={{ fontSize: 10, fill: '#64748b' }}
+                tickFormatter={(date) => formatWeekday(date)}
+                axisLine={{ stroke: '#e2e8f0' }}
+                tickLine={false}
+              />
+              <YAxis 
+                tick={{ fontSize: 10, fill: '#64748b', dx: -10 }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(value) => {
+                  const h = Math.floor(value / 3600)
+                  const m = Math.floor((value % 3600) / 60)
+                  if (h > 0) {
+                    return `${h}时${m}分`
+                  }
+                  return `${m}分`
+                }}
+                width={55}
+              />
+              <Bar 
+                dataKey="duration" 
+                fill="#6366f1" 
+                radius={[4, 4, 0, 0]}
+                maxBarSize={40}
+              >
+                <LabelList 
+                  dataKey="duration" 
+                  position="top" 
+                  formatter={(value) => {
+                    const h = Math.floor(value / 3600)
+                    const m = Math.floor((value % 3600) / 60)
+                    if (h > 0) {
+                      return `${h}时${m}分`
+                    }
+                    return `${m}分`
+                  }}
+                  style={{ fill: '#6366f1', fontSize: 11, fontWeight: 600 }}
+                />
+                {displayChartDays.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={`url(#gradient-${index % 2})`} />
+                ))}
+              </Bar>
+              <defs>
+                <linearGradient id="gradient-0" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#818cf8" />
+                  <stop offset="100%" stopColor="#6366f1" />
+                </linearGradient>
+                <linearGradient id="gradient-1" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#818cf8" />
+                  <stop offset="100%" stopColor="#6366f1" />
+                </linearGradient>
+              </defs>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      {/* 科目统计 */}
+      <section className="subject-stats-section">
+        <h2>科目分布</h2>
+        {Object.keys(subjectStats).length > 0 ? (
+          <>
+            {/* 饼图 */}
+            <div className="pie-chart-container">
+              <div 
+                className="pie-chart"
+                style={{
+                  background: generatePieChartGradient(subjectStats, totalDuration)
+                }}
+              >
+                <div className="pie-chart-center">
+                  <span className="pie-chart-total">{formatDurationShort2(totalDuration)}</span>
+                  <span className="pie-chart-label">总时长</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* 图例 */}
+            <div className="pie-legend">
+              {Object.entries(subjectStats)
+                .sort((a, b) => b[1] - a[1])
+                .map(([subj, duration]) => (
+                  <div key={subj} className="pie-legend-item">
+                    <div 
+                      className="pie-legend-color"
+                      style={{ background: getSubjectColor(subj) }}
+                    />
+                    <span className="pie-legend-name">{subj}</span>
+                    <span className="pie-legend-value">
+                      {((duration / totalDuration) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                ))}
+            </div>
+            
+            {/* 详细列表 */}
+            <div className="subject-stats">
+              {Object.entries(subjectStats)
+                .sort((a, b) => b[1] - a[1])
+                .map(([subj, duration], index) => {
+                  const percentage = (duration / totalDuration * 100).toFixed(1)
+                  return (
+                    <div key={subj} className="subject-stat-item" style={{ animationDelay: `${index * 0.05}s` }}>
+                      <div 
+                        className="subject-color-dot"
+                        style={{ background: getSubjectColor(subj) }}
+                      />
+                      <div className="subject-info">
+                        <span className="subject-name">{subj}</span>
+                        <div className="subject-bar-container">
+                          <div 
+                            className="subject-bar"
+                            style={{ 
+                              width: `${percentage}%`,
+                              background: getSubjectColor(subj)
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="subject-meta">
+                        <span className="subject-duration">{formatDuration(duration)}</span>
+                        <span className="subject-percentage">{percentage}%</span>
+                      </div>
+                    </div>
+                  )
+                })}
+            </div>
+          </>
+        ) : (
+          <p className="empty-state">还没有学习记录哦～</p>
+        )}
+      </section>
+    </div>
+  )
+}
+
+// ============================================
+// 添加记录弹窗组件 (使用 Ant Design Mobile)
+// ============================================
+function AddRecordModal({ visible, onClose, onSave, today }) {
+  const [form] = Form.useForm()
+  const [subjects] = useState(loadSubjects)
+
+  // 重置表单
+  useEffect(() => {
+    if (visible) {
+      form.resetFields()
+    }
+  }, [visible, form])
+
+  const handleSave = () => {
+    form.validateFields().then(values => {
+      const duration = (values.hours || 0) * 3600 + (values.minutes || 0) * 60
+      if (duration <= 0) {
+        return
+      }
+      
+      const subject = values.subject[0] === '自定义' ? values.customSubject?.trim() : values.subject[0]
+      if (!subject) {
+        return
+      }
+
+      // 处理日期，避免时区问题
+      let dateStr = today
+      if (values.date) {
+        const d = new Date(values.date)
+        const year = d.getFullYear()
+        const month = String(d.getMonth() + 1).padStart(2, '0')
+        const day = String(d.getDate()).padStart(2, '0')
+        dateStr = `${year}-${month}-${day}`
+      }
+
+      onSave({
+        id: Date.now(),
+        subject,
+        duration,
+        date: dateStr,
+        timestamp: Date.now()
+      })
+      onClose()
+    }).catch(() => {})
+  }
+
+  const subjectOptions = [
+    ...subjects.map(s => ({ label: s, value: s })),
+    { label: '自定义', value: '自定义' }
+  ]
+
+  return (
+    <Popup
+      visible={visible}
+      onMaskClick={onClose}
+      position="bottom"
+      bodyStyle={{ borderRadius: '16px 16px 0 0' }}
+    >
+      <div style={{ padding: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <span style={{ fontSize: '18px', fontWeight: 600 }}>添加学习记录</span>
+          <span style={{ fontSize: '24px', color: '#999', cursor: 'pointer' }} onClick={onClose}>×</span>
+        </div>
+        
+        <Form form={form} initialValues={{ hours: 0, minutes: 30, subject: ['编程'], date: new Date() }}>
+          <Form.Item name="hours" label="小时" rules={[{ required: true }]}>
+            <Stepper min={0} max={24} style={{ '--button-width': '32px', '--input-width': '60px' }} />
+          </Form.Item>
+          
+          <Form.Item name="minutes" label="分钟" rules={[{ required: true }]}>
+            <Stepper min={0} max={59} style={{ '--button-width': '32px', '--input-width': '60px' }} />
+          </Form.Item>
+          
+          <Form.Item name="subject" label="科目" rules={[{ required: true }]}>
+            <Selector 
+              options={subjectOptions} 
+              style={{ 
+                '--border-radius': '8px', 
+                '--gap': '8px',
+                '--checked-border': '2px solid var(--adm-color-primary)',
+              }}
+              itemStyle={{ minWidth: '60px', justifyContent: 'center' }}
+            />
+          </Form.Item>
+          
+          <Form.Item shouldUpdate={(prev, cur) => prev.subject !== cur.subject}>
+            {({ getFieldValue }) => 
+              getFieldValue('subject')?.[0] === '自定义' && (
+                <Form.Item name="customSubject" label="自定义科目" rules={[{ required: true }]}>
+                  <Input placeholder="输入科目名称" />
+                </Form.Item>
+              )
+            }
+          </Form.Item>
+          
+          <Form.Item name="date" label="日期" trigger="onConfirm" onClick={(e, ref) => ref.current?.open()}>
+            <DatePicker 
+              min={new Date(2020, 0, 1)} 
+              max={new Date()}
+              title="选择日期"
+            >
+              {value => (
+                <div style={{ 
+                  padding: '8px 12px', 
+                  background: '#f5f5f5', 
+                  borderRadius: '4px',
+                  color: value ? '#333' : '#999'
+                }}>
+                  {value ? new Date(value).toLocaleDateString('zh-CN') : '点击选择日期'}
+                </div>
+              )}
+            </DatePicker>
+          </Form.Item>
+        </Form>
+        
+        <Space direction="horizontal" style={{ width: '100%', marginTop: '16px' }} justify="between">
+          <Button style={{ flex: 1 }} onClick={onClose}>取消</Button>
+          <Button style={{ flex: 1 }} color="primary" onClick={handleSave}>保存</Button>
+        </Space>
+      </div>
+    </Popup>
+  )
+}
+
+// ============================================
+// 记录页面
+// ============================================
+function RecordsPage({ records, setRecords }) {
+  const today = getLocalDateString()
+  const [filterDate, setFilterDate] = useState('')
+  const [filterSubject, setFilterSubject] = useState('')
+  const [showFilter, setShowFilter] = useState(false)
+  
+  // 添加记录弹窗
+  const [showAddForm, setShowAddForm] = useState(false)
+
+  // 获取所有科目
+  const allSubjects = [...new Set(records.map(r => r.subject))]
+
+  // 筛选记录
+  const filteredRecords = records.filter(r => {
+    if (filterDate && r.date !== filterDate) return false
+    if (filterSubject && r.subject !== filterSubject) return false
+    return true
+  })
+
+  // 按日期分组
+  const groupedRecords = filteredRecords.reduce((acc, record) => {
+    const date = record.date
+    if (!acc[date]) {
+      acc[date] = []
+    }
+    acc[date].push(record)
+    return acc
+  }, {})
+
+  // 按日期排序
+  const sortedDates = Object.keys(groupedRecords).sort((a, b) => new Date(b) - new Date(a))
+
+  const handleDelete = (id) => {
+    Dialog.confirm({
+      content: '确定要删除这条记录吗？',
+      onConfirm: () => {
+        setRecords(records.filter(r => r.id !== id))
+      }
+    })
+  }
+
+  // 计算总时长
+  const totalDuration = filteredRecords.reduce((sum, r) => sum + r.duration, 0)
+
+  // 清空所有记录
+  const handleClearAll = () => {
+    Dialog.confirm({
+      content: '确定要清空所有学习记录吗？此操作不可恢复。',
+      onConfirm: () => {
+        setRecords([])
+      }
+    })
+  }
+
+  // 清除筛选
+  const clearFilter = () => {
+    setFilterDate('')
+    setFilterSubject('')
+    setShowFilter(false)
+  }
+
+  return (
+    <div className="page records-page">
+      {/* 操作栏 */}
+      <div className="filter-bar">
+        <div className="filter-toggle" onClick={() => setShowFilter(!showFilter)}>
+          <span>🔍</span>
+          <span>筛选</span>
+          {(filterDate || filterSubject) && (
+            <span className="filter-badge">1</span>
+          )}
+        </div>
+        
+        <div className="filter-bar-actions">
+          <button className="add-btn" onClick={() => setShowAddForm(true)}>
+            ➕ 添加
+          </button>
+          {records.length > 0 && (
+            <button className="clear-btn small" onClick={handleClearAll}>
+              清空
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 添加记录弹窗 */}
+      <AddRecordModal 
+        visible={showAddForm}
+        onClose={() => setShowAddForm(false)}
+        onSave={(record) => setRecords([record, ...records])}
+        today={today}
+      />
+
+      {/* 筛选面板 */}
+      {showFilter && (
+        <div className="filter-panel">
+          <div className="filter-row">
+            <div className="filter-item">
+              <label>日期</label>
+              <input 
+                type="date" 
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+                max={today}
+              />
+            </div>
+            <div className="filter-item">
+              <label>科目</label>
+              <select 
+                value={filterSubject}
+                onChange={(e) => setFilterSubject(e.target.value)}
+              >
+                <option value="">全部科目</option>
+                {allSubjects.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {(filterDate || filterSubject) && (
+            <button className="filter-clear-btn" onClick={clearFilter}>
+              清除筛选
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 统计信息 */}
+      <div className="records-summary">
+        <span>共 {filteredRecords.length} 条记录</span>
+        <span>·</span>
+        <span>总计 {formatDuration(totalDuration)}</span>
+      </div>
+
+      <div className="records-list">
+        {sortedDates.map(date => (
+          <div key={date} className="date-group">
+            <div className="date-header">
+              <span className="date-title">{formatDate(date)}</span>
+              <span className="date-weekday">{formatWeekday(date)}</span>
+              <span className="date-total">
+                {formatDuration(groupedRecords[date].reduce((sum, r) => sum + r.duration, 0))}
+              </span>
+            </div>
+            <div className="date-records">
+              {groupedRecords[date].map((record, i) => (
+                <div 
+                  key={record.id} 
+                  className="record-item"
+                  style={{ animationDelay: `${i * 0.05}s` }}
+                >
+                  <div 
+                    className="record-color-bar"
+                    style={{ background: getSubjectColor(record.subject) }}
+                  />
+                  <div className="record-content">
+                    <span className="record-subject">{record.subject}</span>
+                    <span className="record-duration">{formatDuration(record.duration)}</span>
+                  </div>
+                  <button 
+                    className="record-delete"
+                    onClick={() => handleDelete(record.id)}
+                    title="删除"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        {records.length === 0 && (
+          <div className="empty-state-container">
+            <div className="empty-icon">📭</div>
+            <p className="empty-state">还没有学习记录</p>
+            <p className="empty-hint">点击首页开始第一次学习吧！</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// 设置页面
+// ============================================
+function SettingsPage() {
+  const [checking, setChecking] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [apkPath, setApkPath] = useState(null)
+  const [isAndroid, setIsAndroid] = useState(false)
+  const [capacitorReady, setCapacitorReady] = useState(false)
+  
+  // 初始化 Capacitor
+  useEffect(() => {
+    loadCapacitor().then(ready => {
+      setCapacitorReady(ready)
+      if (ready && isNativePlatform() && getPlatform() === 'android') {
+        setIsAndroid(true)
+      }
+    })
+  }, [])
+
+  // 检查更新 - 使用 GitHub API
+  const checkUpdate = async () => {
+    setChecking(true)
+    setUpdateInfo(null)
+    
+    console.log('[Update] Checking GitHub releases...')
+    console.log('[Update] Current version:', APP_VERSION)
+    
+    try {
+      const response = await fetch(RELEASE_API)
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: 无法连接 GitHub`)
+      }
+      
+      const release = await response.json()
+      // GitHub tag 格式: v1.7.41 -> 去掉 v 前缀
+      const latestVersion = release.tag_name.replace(/^v/, '')
+      
+      console.log('[Update] GitHub latest version:', latestVersion)
+      
+      // 版本比较
+      const compareVersions = (v1, v2) => {
+        const parts1 = v1.split('.').map(Number)
+        const parts2 = v2.split('.').map(Number)
+        for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+          const p1 = parts1[i] || 0
+          const p2 = parts2[i] || 0
+          if (p1 < p2) return -1
+          if (p1 > p2) return 1
+        }
+        return 0
+      }
+      
+      const needsUpdate = compareVersions(APP_VERSION, latestVersion) < 0
+      
+      if (needsUpdate) {
+        // 解析 release body 为更新日志
+        let changelog = release.body || '暂无更新说明'
+        changelog = changelog.split('\n').filter(line => line.trim()).slice(0, 5).join('\n')
+        
+        setUpdateInfo({
+          hasUpdate: true,
+          latestVersion: latestVersion,
+          changelog: changelog,
+          releaseUrl: release.html_url,
+          publishedAt: release.published_at
+        })
+      } else {
+        setUpdateInfo({
+          hasUpdate: false,
+          currentVersion: APP_VERSION
+        })
+      }
+    } catch (error) {
+      console.error('[Update] Error:', error)
+      setUpdateInfo({
+        error: true,
+        message: `检查更新失败: ${error.message}`
+      })
+    }
+    
+    setChecking(false)
+  }
+
+  // 下载并安装 APK（Android）
+  const downloadAndInstall = async () => {
+    // 打开 GitHub Release 页面下载
+    const url = updateInfo?.releaseUrl || RELEASE_URL
+    
+    Toast.show({ icon: 'loading', content: '正在打开下载页面...', duration: 1000 })
+    
+    try {
+      if (capacitorReady && isNativePlatform()) {
+        await Browser.open({ url })
+      } else {
+        window.open(url, '_blank')
+      }
+    } catch (e) {
+      console.error('Browser open error:', e)
+      window.open(url, '_blank')
+    }
+  }
+
+  // Web 端下载
+  const openReleasePage = async () => {
+    const url = RELEASE_URL
+    
+    if (capacitorReady && isNativePlatform()) {
+      await Browser.open({ url })
+    } else {
+      window.open(url, '_blank')
+    }
+  }
+
+  // 下载更新
+  const downloadUpdate = () => {
+    if (isAndroid) {
+      downloadAndInstall()
+    } else {
+      openReleasePage()
+    }
+  }
+
+  return (
+    <div className="page settings-page">
+      {/* 关于 */}
+      <section className="settings-section">
+        <h2>关于</h2>
+        <div className="settings-card">
+          <div className="setting-item">
+            <span className="setting-label">学习追踪器</span>
+            <span className="setting-value">v{APP_VERSION}</span>
+          </div>
+          <div className="setting-item">
+            <span className="setting-label">运行平台</span>
+            <span className="setting-value">{isAndroid ? 'android' : 'web'}</span>
+          </div>
+        </div>
+      </section>
+
+      {/* 更新 */}
+      <section className="settings-section">
+        <h2>更新</h2>
+        <div className="settings-card">
+          <button 
+            className="check-update-btn"
+            onClick={checkUpdate}
+            disabled={checking}
+          >
+            {checking ? '检查中...' : '检查更新'}
+          </button>
+          
+          {updateInfo && (
+            <div className={`update-info ${updateInfo.hasUpdate ? 'has-update' : ''} ${updateInfo.error ? 'error' : ''}`}>
+              {updateInfo.hasUpdate && (
+                <>
+                  <div className="update-badge">🎉 发现新版本</div>
+                  <div className="update-version">v{updateInfo.latestVersion}</div>
+                  <div className="update-changelog" style={{ whiteSpace: 'pre-line' }}>{updateInfo.changelog}</div>
+                  <button 
+                    className="download-btn"
+                    onClick={downloadUpdate}
+                    disabled={downloading}
+                  >
+                    {downloading ? `下载中 ${downloadProgress}%` : isAndroid ? '下载并安装' : '前往下载'}
+                  </button>
+                  {!isAndroid && updateInfo.apkUrl && (
+                    <button 
+                      className="download-btn secondary"
+                      onClick={() => window.open(updateInfo.apkUrl, '_blank')}
+                      style={{ marginTop: '8px', background: '#f5f5f5', color: '#333' }}
+                    >
+                      直接下载 APK
+                    </button>
+                  )}
+                </>
+              )}
+              {!updateInfo.hasUpdate && !updateInfo.error && (
+                <div className="up-to-date">
+                  <span className="check-icon">✓</span>
+                  已是最新版本 v{APP_VERSION}
+                </div>
+              )}
+              {updateInfo.error && (
+                <div className="error-message">{updateInfo.message}</div>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 数据管理 */}
+      <section className="settings-section">
+        <h2>数据</h2>
+        <div className="settings-card">
+          <div className="setting-item">
+            <span className="setting-label">存储位置</span>
+            <span className="setting-value">{isAndroid ? '本地存储' : '本地浏览器'}</span>
+          </div>
+          <div className="setting-item">
+            <span className="setting-label">数据安全</span>
+            <span className="setting-value note">数据保存在您的设备上，不会上传到服务器</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+// ============================================
+// 主应用
+// ============================================
+function App() {
+  const [records, setRecords] = useState(loadData)
+  const [currentPage, setCurrentPage] = useState('timer')
+
+  // 保存记录
+  useEffect(() => {
+    saveData(records)
+  }, [records])
+
+  const pages = {
+    timer: <TimerPage records={records} setRecords={setRecords} />,
+    stats: <StatsPage records={records} />,
+    records: <RecordsPage records={records} setRecords={setRecords} />,
+    settings: <SettingsPage />
+  }
+
+  return (
+    <div className="app">
+      <div className="container">
+        {pages[currentPage]}
+      </div>
+
+      {/* 底部导航 */}
+      <nav className="bottom-nav">
+        <button 
+          className={`nav-item ${currentPage === 'timer' ? 'active' : ''}`}
+          onClick={() => setCurrentPage('timer')}
+        >
+          <span className="nav-icon">⏱️</span>
+          <span className="nav-label">计时</span>
+        </button>
+        <button 
+          className={`nav-item ${currentPage === 'stats' ? 'active' : ''}`}
+          onClick={() => setCurrentPage('stats')}
+        >
+          <span className="nav-icon">📊</span>
+          <span className="nav-label">统计</span>
+        </button>
+        <button 
+          className={`nav-item ${currentPage === 'records' ? 'active' : ''}`}
+          onClick={() => setCurrentPage('records')}
+        >
+          <span className="nav-icon">📝</span>
+          <span className="nav-label">记录</span>
+        </button>
+        <button 
+          className={`nav-item ${currentPage === 'settings' ? 'active' : ''}`}
+          onClick={() => setCurrentPage('settings')}
+        >
+          <span className="nav-icon">⚙️</span>
+          <span className="nav-label">设置</span>
+        </button>
+      </nav>
+    </div>
+  )
+}
+
+export default App
